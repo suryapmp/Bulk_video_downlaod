@@ -3,35 +3,19 @@ import ast
 import aiohttp
 import asyncio
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, WebSocket
+from fastapi import FastAPI, UploadFile, File, WebSocket, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-# --------------------------------------------------------------------
-# CONFIGURATION
-# --------------------------------------------------------------------
-BASE_DIR = "videos"
-os.makedirs(BASE_DIR, exist_ok=True)
-
-MAX_CONCURRENT_DOWNLOADS = 10  # 🔹 limit 10 downloads at a time
-
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-clients = set()  # Active websocket connections
+clients = set()
 
-
-# --------------------------------------------------------------------
-# ROUTES
-# --------------------------------------------------------------------
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
+# ---------------------- WebSocket ----------------------
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -42,7 +26,6 @@ async def ws_endpoint(ws: WebSocket):
     except:
         clients.remove(ws)
 
-
 async def broadcast(data: dict):
     for ws in list(clients):
         try:
@@ -50,6 +33,10 @@ async def broadcast(data: dict):
         except:
             clients.remove(ws)
 
+# ---------------------- Routes ----------------------
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)):
@@ -59,12 +46,9 @@ async def upload_excel(file: UploadFile = File(...)):
         return JSONResponse({"error": f"Invalid Excel file: {e}"}, status_code=400)
 
     df.columns = [c.strip().lower() for c in df.columns]
-    required_cols = {"program_code", "course_name", "link", "roll_no"}
-
-    if not required_cols.issubset(df.columns):
-        return JSONResponse(
-            {"error": f"Excel must contain columns: {required_cols}"}, status_code=400
-        )
+    required = {"program_code", "course_name", "link", "roll_no"}
+    if not required.issubset(df.columns):
+        return JSONResponse({"error": f"Missing columns {required}"}, status_code=400)
 
     tasks = []
     for _, row in df.iterrows():
@@ -72,17 +56,17 @@ async def upload_excel(file: UploadFile = File(...)):
         course = str(row["course_name"]).strip()
         roll = str(row["roll_no"]).strip()
         raw_link = str(row["link"]).strip()
-
         urls = []
+
         try:
             if raw_link.startswith("[") and raw_link.endswith("]"):
                 parsed = ast.literal_eval(raw_link)
                 if isinstance(parsed, list):
-                    urls = [u.strip() for u in parsed if isinstance(u, str) and u.startswith("http")]
+                    urls = [u for u in parsed if isinstance(u, str) and u.startswith("http")]
             elif raw_link.startswith("http"):
                 urls = [raw_link]
         except Exception:
-            urls = [part.strip().strip('"').strip("'") for part in raw_link.split(",") if "http" in part]
+            urls = [p.strip().strip('"').strip("'") for p in raw_link.split(",") if "http" in p]
 
         for i, url in enumerate(urls, start=1):
             tasks.append((program, course, roll, url, i))
@@ -90,36 +74,46 @@ async def upload_excel(file: UploadFile = File(...)):
     if not tasks:
         return JSONResponse({"error": "No valid video links found."}, status_code=400)
 
-    asyncio.create_task(batch_downloads(tasks))
-    return {"message": "Downloads started successfully!"}
+    return {"message": "Excel processed successfully", "total_videos": len(tasks), "tasks": tasks}
 
 
-# --------------------------------------------------------------------
-# DOWNLOAD LOGIC
-# --------------------------------------------------------------------
-async def download_video(session, sem, program, course, roll_no, url, index):
-    async with sem:
-        folder = os.path.join(BASE_DIR, program, course)
-        os.makedirs(folder, exist_ok=True)
-        filename = os.path.join(folder, f"{roll_no}_{index}.mp4")
+@app.post("/start_downloads")
+async def start_downloads(path: str = Form(...), tasks: str = Form(...)):
+    """Start downloading all videos to user-selected path"""
+    import json
+    task_list = json.loads(tasks)
+    asyncio.create_task(download_videos(task_list, path))
+    return {"message": f"Download started to: {path}"}
 
-        await broadcast({
-            "roll_no": roll_no,
-            "program": program,
-            "course": course,
-            "status": "⏳ Starting...",
-            "progress": 0,
-            "speed": "-",
-            "size": "-"
-        })
 
-        try:
+# ---------------------- Download Logic ----------------------
+async def download_videos(tasks, base_path):
+    """Download in batches of 10"""
+    for batch_start in range(0, len(tasks), 10):
+        batch = tasks[batch_start: batch_start + 10]
+        await asyncio.gather(*[download_one(*task, base_path=base_path) for task in batch])
+
+async def download_one(program, course, roll_no, url, index, base_path):
+    folder = os.path.join(base_path, program, course)
+    os.makedirs(folder, exist_ok=True)
+    filename = os.path.join(folder, f"{roll_no}_{index}.mp4")
+
+    await broadcast({
+        "roll_no": roll_no,
+        "program": program,
+        "course": course,
+        "status": "⏳ Starting...",
+        "progress": 0,
+        "speed": "-",
+        "size": "-"
+    })
+
+    try:
+        async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
                     raise Exception(f"HTTP {resp.status}")
-
                 total = int(resp.headers.get("content-length", 0))
-                total_mb = f"{total / (1024 * 1024):.2f} MB" if total else "-"
                 downloaded = 0
                 start_time = asyncio.get_event_loop().time()
 
@@ -132,7 +126,7 @@ async def download_video(session, sem, program, course, roll_no, url, index):
                         elapsed = asyncio.get_event_loop().time() - start_time
                         speed = f"{(downloaded / 1024) / elapsed:.1f} KB/s" if elapsed > 0 else "-"
                         progress = int(downloaded * 100 / total) if total else 0
-
+                        size_mb = f"{total / (1024*1024):.2f} MB" if total else "-"
                         await broadcast({
                             "roll_no": roll_no,
                             "program": program,
@@ -140,37 +134,26 @@ async def download_video(session, sem, program, course, roll_no, url, index):
                             "status": "⬇️ Downloading...",
                             "progress": progress,
                             "speed": speed,
-                            "size": total_mb
+                            "size": size_mb
                         })
 
-            await broadcast({
-                "roll_no": roll_no,
-                "program": program,
-                "course": course,
-                "status": "✅ Completed",
-                "progress": 100,
-                "speed": "Done",
-                "size": total_mb
-            })
+        await broadcast({
+            "roll_no": roll_no,
+            "program": program,
+            "course": course,
+            "status": "✅ Completed",
+            "progress": 100,
+            "speed": "Done",
+            "size": f"{os.path.getsize(filename)/(1024*1024):.2f} MB"
+        })
 
-        except Exception as e:
-            await broadcast({
-                "roll_no": roll_no,
-                "program": program,
-                "course": course,
-                "status": f"❌ Failed: {e}",
-                "progress": 0,
-                "speed": "-",
-                "size": "-"
-            })
-
-
-async def batch_downloads(tasks):
-    """Download videos in batches of 10 concurrently"""
-    sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
-    async with aiohttp.ClientSession() as session:
-        download_coros = [
-            download_video(session, sem, program, course, roll_no, url, index)
-            for program, course, roll_no, url, index in tasks
-        ]
-        await asyncio.gather(*download_coros)
+    except Exception as e:
+        await broadcast({
+            "roll_no": roll_no,
+            "program": program,
+            "course": course,
+            "status": f"❌ Failed: {e}",
+            "progress": 0,
+            "speed": "-",
+            "size": "-"
+        })
