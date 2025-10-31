@@ -2,80 +2,169 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>🎬 Video Downloader</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.3.2/dist/tailwind.min.css" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Downloader Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #e0e7ff, #f8fafc);
+      font-family: "Inter", sans-serif;
+      min-height: 100vh;
+    }
+    .card {
+      background: white;
+      border-radius: 1rem;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+    }
+    .progress-bar {
+      transition: width 0.4s ease;
+    }
+    .scroll-table {
+      max-height: 420px;
+      overflow-y: auto;
+    }
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(100, 116, 139, 0.4);
+      border-radius: 6px;
+    }
+  </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex flex-col items-center p-10">
-  <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-3xl">
-    <h1 class="text-3xl font-bold text-center mb-6 text-indigo-600">📥 Exam Video Downloader</h1>
 
-    <form id="uploadForm" class="space-y-4">
-      <input type="file" name="file" id="excelFile" accept=".xlsx" required class="w-full border p-2 rounded" />
-      <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 w-full">Upload Excel</button>
-    </form>
+<body class="flex items-center justify-center py-10">
+  <div class="max-w-6xl w-full mx-auto px-6">
 
-    <div id="pathSelector" class="hidden mt-6">
-      <label class="block mb-2 text-gray-700 font-medium">Select Download Folder Path:</label>
-      <input type="text" id="downloadPath" placeholder="e.g. D:/ExamVideos" class="w-full border p-2 rounded mb-3">
-      <button id="startBtn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full">Start Download</button>
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-4xl font-bold text-indigo-700 mb-2">🎥 Video Downloader</h1>
+      <p class="text-slate-600">Upload Excel → Select Folder → Monitor Progress</p>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="card p-6 mb-10">
+      <form id="uploadForm" class="space-y-5">
+        <div>
+          <label class="font-semibold text-slate-700">Upload Excel File</label>
+          <input type="file" id="fileInput" name="file" accept=".xlsx"
+                 class="block mt-2 w-full rounded-md border border-slate-300 p-2 text-slate-700 focus:ring-2 focus:ring-indigo-400 focus:outline-none" />
+        </div>
+
+        <div class="flex flex-col md:flex-row gap-4">
+          <input id="pathInput" type="text"
+                 placeholder="Enter folder path (e.g. D:\\ExamVideos)"
+                 class="flex-1 rounded-md border border-slate-300 p-2 text-slate-700 focus:ring-2 focus:ring-indigo-400 focus:outline-none" />
+          <button type="submit"
+                  class="bg-indigo-600 text-white px-6 py-2 rounded-md font-medium shadow-sm hover:bg-indigo-700 transition">
+            Upload Excel
+          </button>
+          <button type="button" id="startBtn"
+                  class="hidden bg-green-600 text-white px-6 py-2 rounded-md font-medium shadow-sm hover:bg-green-700 transition">
+            Start Downloads
+          </button>
+        </div>
+        <div id="info" class="text-slate-500 text-sm font-medium"></div>
+      </form>
+    </div>
+
+    <!-- Download Progress -->
+    <div class="card p-6">
+      <h2 class="text-2xl font-semibold mb-4 text-slate-700 flex items-center gap-2">
+        <span>Download Progress</span>
+      </h2>
+
+      <div class="scroll-table">
+        <table class="w-full text-sm text-slate-700 border-collapse">
+          <thead class="sticky top-0 bg-slate-100 border-b border-slate-300">
+            <tr>
+              <th class="p-2 text-left">Roll No</th>
+              <th class="p-2 text-left">Program</th>
+              <th class="p-2 text-left">Course</th>
+              <th class="p-2 text-left">Status</th>
+              <th class="p-2 text-left">Size</th>
+              <th class="p-2 text-left">Speed</th>
+              <th class="p-2 text-left w-1/3">Progress</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <div id="logs" class="mt-10 w-full max-w-5xl"></div>
-
   <script>
-    const uploadForm = document.getElementById("uploadForm");
-    const pathSelector = document.getElementById("pathSelector");
-    const downloadPath = document.getElementById("downloadPath");
-    let taskData = null;
-
-    uploadForm.onsubmit = async (e) => {
-      e.preventDefault();
-      const formData = new FormData(uploadForm);
-      const res = await fetch("/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.error) alert(data.error);
-      else {
-        taskData = data.tasks;
-        pathSelector.classList.remove("hidden");
-        alert(`Excel processed ✅ Found ${data.total_videos} videos.`);
-      }
-    };
-
-    document.getElementById("startBtn").onclick = async () => {
-      const path = downloadPath.value.trim();
-      if (!path) return alert("Please enter a download path.");
-      const fd = new FormData();
-      fd.append("path", path);
-      fd.append("tasks", JSON.stringify(taskData));
-      const res = await fetch("/start_downloads", { method: "POST", body: fd });
-      const data = await res.json();
-      alert(data.message);
-    };
+    const uploadForm = document.getElementById('uploadForm');
+    const fileInput = document.getElementById('fileInput');
+    const startBtn = document.getElementById('startBtn');
+    const pathInput = document.getElementById('pathInput');
+    const info = document.getElementById('info');
+    const tbody = document.getElementById('tbody');
 
     const ws = new WebSocket(`ws://${window.location.host}/ws`);
-    ws.onmessage = (e) => {
-      const d = JSON.parse(e.data);
-      const logs = document.getElementById("logs");
-      const id = `${d.roll_no}-${d.course}`;
-      let el = document.getElementById(id);
-      if (!el) {
-        el = document.createElement("div");
-        el.id = id;
-        el.className = "border p-3 rounded mb-2 bg-white shadow";
-        logs.appendChild(el);
+    ws.onmessage = (event) => updateRow(JSON.parse(event.data));
+
+    function updateRow(d) {
+      if (!d.roll) return;
+      const key = `${d.roll}-${d.program}-${d.course}`;
+      let row = document.getElementById(key);
+
+      if (!row) {
+        row = document.createElement('tr');
+        row.id = key;
+        row.innerHTML = `
+          <td class="p-2 border-b border-slate-200">${d.roll}</td>
+          <td class="p-2 border-b border-slate-200">${d.program}</td>
+          <td class="p-2 border-b border-slate-200">${d.course}</td>
+          <td class="p-2 border-b border-slate-200 status text-xs font-semibold">${d.status}</td>
+          <td class="p-2 border-b border-slate-200 size">${d.size || '-'}</td>
+          <td class="p-2 border-b border-slate-200 speed">${d.speed || '-'}</td>
+          <td class="p-2 border-b border-slate-200">
+            <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+              <div class="progress-bar bg-indigo-500 h-3 rounded-full" style="width:${d.progress||0}%"></div>
+            </div>
+            <span class="text-xs text-slate-600">${d.progress||0}%</span>
+          </td>`;
+        tbody.appendChild(row);
+      } else {
+        row.querySelector('.status').textContent = d.status;
+        row.querySelector('.size').textContent = d.size || '-';
+        row.querySelector('.speed').textContent = d.speed || '-';
+        row.querySelector('.progress-bar').style.width = (d.progress || 0) + '%';
+        row.querySelector('span.text-xs').textContent = (d.progress || 0) + '%';
+
+        const bar = row.querySelector('.progress-bar');
+        if (d.status.includes('Failed')) bar.className = 'progress-bar bg-red-500 h-3 rounded-full';
+        else if (d.status.includes('Completed')) bar.className = 'progress-bar bg-green-500 h-3 rounded-full';
+        else bar.className = 'progress-bar bg-indigo-500 h-3 rounded-full';
       }
-      el.innerHTML = `
-        <div class="flex justify-between">
-          <div><b>${d.roll_no}</b> | ${d.course} | ${d.program}</div>
-          <div>${d.status}</div>
-        </div>
-        <div class="h-2 bg-gray-200 rounded mt-2">
-          <div class="bg-indigo-500 h-2 rounded" style="width:${d.progress}%"></div>
-        </div>
-        <div class="text-sm text-gray-600 mt-1">Progress: ${d.progress}% | Speed: ${d.speed} | Size: ${d.size}</div>
-      `;
-    };
+    }
+
+    uploadForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!fileInput.files.length) return alert('Please select an Excel file.');
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      const res = await fetch('/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) return info.textContent = data.error;
+      info.textContent = `✅ ${data.total} video links found. Enter folder path and click “Start Downloads”.`;
+      startBtn.classList.remove('hidden');
+    });
+
+    startBtn.addEventListener('click', async () => {
+      const path = pathInput.value.trim();
+      if (!path) return alert('Please enter a valid download folder path.');
+      const fd = new FormData();
+      fd.append('path', path);
+      const res = await fetch('/start_downloads', { method: 'POST', body: fd });
+      const data = await res.json();
+      info.textContent = data.message || data.error;
+    });
   </script>
 </body>
 </html>
