@@ -104,8 +104,9 @@
     const pathInput = document.getElementById('pathInput');
     const info = document.getElementById('info');
     const tbody = document.getElementById('tbody');
-
-    const ws = new WebSocket(`ws://${window.location.host}/ws`);
+const ws = new WebSocket(
+  (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/ws"
+);
     ws.onmessage = (event) => updateRow(JSON.parse(event.data));
 
     function updateRow(d) {
@@ -168,3 +169,4 @@
   </script>
 </body>
 </html>
+
