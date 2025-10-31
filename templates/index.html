@@ -1,106 +1,81 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🎥 Video Download Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <meta charset="UTF-8" />
+  <title>🎬 Video Downloader</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.3.2/dist/tailwind.min.css" rel="stylesheet">
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans">
-  <div class="max-w-7xl mx-auto py-10 px-4">
-    <h1 class="text-4xl font-bold text-center text-indigo-400 mb-8">🎬 Video Downloader</h1>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-10">
+  <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-3xl">
+    <h1 class="text-3xl font-bold text-center mb-6 text-indigo-600">📥 Exam Video Downloader</h1>
 
-    <div class="flex justify-center mb-10 space-x-4">
-      <input id="fileInput" type="file" accept=".xlsx" class="bg-gray-800 border border-gray-700 text-gray-300 rounded p-3 w-1/2">
-      <button onclick="uploadFile()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg shadow-lg transition">⬆️ Upload & Start</button>
-    </div>
+    <form id="uploadForm" class="space-y-4">
+      <input type="file" name="file" id="excelFile" accept=".xlsx" required class="w-full border p-2 rounded" />
+      <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 w-full">Upload Excel</button>
+    </form>
 
-    <div id="notif" class="hidden text-center font-semibold mb-6"></div>
-
-    <div class="overflow-x-auto">
-      <table class="min-w-full text-sm text-left border border-gray-800 bg-gray-800 rounded-lg shadow-lg">
-        <thead class="bg-indigo-700 text-white uppercase">
-          <tr>
-            <th class="p-3">Roll No</th>
-            <th class="p-3">Program</th>
-            <th class="p-3">Course</th>
-            <th class="p-3">File Size</th>
-            <th class="p-3">Status</th>
-            <th class="p-3">Speed</th>
-            <th class="p-3 w-1/4">Progress</th>
-          </tr>
-        </thead>
-        <tbody id="logTable"></tbody>
-      </table>
+    <div id="pathSelector" class="hidden mt-6">
+      <label class="block mb-2 text-gray-700 font-medium">Select Download Folder Path:</label>
+      <input type="text" id="downloadPath" placeholder="e.g. D:/ExamVideos" class="w-full border p-2 rounded mb-3">
+      <button id="startBtn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full">Start Download</button>
     </div>
   </div>
 
-  <script>
-    const ws = new WebSocket(`ws://${window.location.host}/ws`);
-    const table = document.getElementById("logTable");
-    const notif = document.getElementById("notif");
-    const rows = {};
+  <div id="logs" class="mt-10 w-full max-w-5xl"></div>
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      updateRow(data);
+  <script>
+    const uploadForm = document.getElementById("uploadForm");
+    const pathSelector = document.getElementById("pathSelector");
+    const downloadPath = document.getElementById("downloadPath");
+    let taskData = null;
+
+    uploadForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const formData = new FormData(uploadForm);
+      const res = await fetch("/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.error) alert(data.error);
+      else {
+        taskData = data.tasks;
+        pathSelector.classList.remove("hidden");
+        alert(`Excel processed ✅ Found ${data.total_videos} videos.`);
+      }
     };
 
-    function updateRow(d) {
-      const key = `${d.roll_no}-${d.program}-${d.course}`;
-      if (!rows[key]) {
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td class="p-3 font-semibold">${d.roll_no}</td>
-          <td class="p-3">${d.program}</td>
-          <td class="p-3">${d.course}</td>
-          <td class="p-3 size">${d.size || "-"}</td>
-          <td class="p-3 status">${formatStatus(d.status)}</td>
-          <td class="p-3 speed">${d.speed}</td>
-          <td class="p-3">
-            <div class="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
-              <div class="progress bg-indigo-500 h-3 transition-all duration-200" style="width:${d.progress}%"></div>
-            </div>
-          </td>
-        `;
-        table.appendChild(row);
-        rows[key] = row;
-      } else {
-        const row = rows[key];
-        row.querySelector(".status").innerHTML = formatStatus(d.status);
-        row.querySelector(".speed").textContent = d.speed;
-        row.querySelector(".size").textContent = d.size;
-        row.querySelector(".progress").style.width = `${d.progress}%`;
+    document.getElementById("startBtn").onclick = async () => {
+      const path = downloadPath.value.trim();
+      if (!path) return alert("Please enter a download path.");
+      const fd = new FormData();
+      fd.append("path", path);
+      fd.append("tasks", JSON.stringify(taskData));
+      const res = await fetch("/start_downloads", { method: "POST", body: fd });
+      const data = await res.json();
+      alert(data.message);
+    };
+
+    const ws = new WebSocket(`ws://${window.location.host}/ws`);
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      const logs = document.getElementById("logs");
+      const id = `${d.roll_no}-${d.course}`;
+      let el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement("div");
+        el.id = id;
+        el.className = "border p-3 rounded mb-2 bg-white shadow";
+        logs.appendChild(el);
       }
-    }
-
-    function formatStatus(status) {
-      if (status.includes("✅")) return `<span class="text-green-400">${status}</span>`;
-      if (status.includes("❌")) return `<span class="text-red-400">${status}</span>`;
-      if (status.includes("⬇️")) return `<span class="text-blue-400">${status}</span>`;
-      return `<span class="text-yellow-300">${status}</span>`;
-    }
-
-    async function uploadFile() {
-      const fileInput = document.getElementById("fileInput");
-      if (!fileInput.files.length) return showNotif("⚠️ Please select an Excel file", "yellow");
-      const formData = new FormData();
-      formData.append("file", fileInput.files[0]);
-      showNotif("⏳ Uploading and starting downloads...", "blue");
-      try {
-        const res = await axios.post("/upload", formData, { headers: { "Content-Type": "multipart/form-data" } });
-        showNotif("✅ " + res.data.message, "green");
-      } catch (err) {
-        showNotif("❌ " + (err.response?.data?.error || err.message), "red");
-      }
-    }
-
-    function showNotif(msg, color) {
-      notif.className = `text-${color}-400 bg-${color}-900/20 border border-${color}-700 rounded-lg p-3 font-medium`;
-      notif.textContent = msg;
-      notif.classList.remove("hidden");
-    }
+      el.innerHTML = `
+        <div class="flex justify-between">
+          <div><b>${d.roll_no}</b> | ${d.course} | ${d.program}</div>
+          <div>${d.status}</div>
+        </div>
+        <div class="h-2 bg-gray-200 rounded mt-2">
+          <div class="bg-indigo-500 h-2 rounded" style="width:${d.progress}%"></div>
+        </div>
+        <div class="text-sm text-gray-600 mt-1">Progress: ${d.progress}% | Speed: ${d.speed} | Size: ${d.size}</div>
+      `;
+    };
   </script>
 </body>
 </html>
